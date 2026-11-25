@@ -2,37 +2,63 @@
 
 ![OpenCubeWorld banner](assets/banner.svg)
 
-Cube World toys, reborn on the **Waveshare 1.54inch Touch LCD Module**
-(SKU 34370, 240×240 ST7789S + CST816D capacitive touch).
+**Radica Cube World (2005), faithfully reborn in authentic 32×32 1-bit monochrome LCD on the Waveshare ESP32-S3-LCD-1.54.**
 
-A Radica *Cube World* toy is a handful of little cube-shaped characters
-that dance on a tiny display, keep alive with each other, and **whip**
-one another over a single-wire serial protocol. This project reverse
-engineered that protocol from real logic-analyzer captures, rebuilt the
-codec, and turned the three example captures into a touch-controlled
-world that runs on a Waveshare 1.54" LCD.
+Original Radica Cube World toys display lively **black-and-white stick figures** on a tiny **32×32 monochrome dot-matrix STN LCD** — no color, no cartoon scenery — and react to tilting, flipping, shaking, three front buttons, and magnetic single-wire links between cubes. OpenCubeWorld pairs the reverse-engineered single-wire protocol codec with an authentic 32×32 monochrome LCD stickman renderer, real QMI8658 6-axis IMU motion physics, and flicker-free 240×240 framebuffer output.
 
 ![screenshot](assets/screenshot.svg)
 
-## What's in the box (software)
+## Features
 
-| Sketch | What it does |
+- **Authentic 32×32 1-bit monochrome LCD**: Crisp 7× dot-matrix pixel grid (`224×224` centered inside an 8 px recessed dark cube bezel), passive-matrix STN pixel persistence/ghosting, and 3 switchable monochrome palettes (`STN` olive-grey, `B&W` pure black-on-white, `INV` inverted).
+- **31 authentic monochrome stick-figure poses + 12 props**: Idle, walk, stretch, cross-legged sit, scratch head, mad/stomp, kick, wave, whip, dodge, cube-turn tumble, dizzy/sick, dark-inverted sleep with rising `Z`s, iconic Radica power-on maze wipe-on, and lowering Venetian blind when a character visits a linked cube.
+- **5 Radica characters** with 1-bit monochrome signature props:
+  - **Whip** (`0x06`, Series 1) — rope / whip crack
+  - **Dodger** (`0x0E`, Series 1) — bouncing ball
+  - **Hans** (`0x0D`, Series 2) — overhead barbell
+  - **Handy** (`0x0B`, Series 2) — wrench & sparks
+  - **Scoop / Open** (`0x01`, Series 1) — his dog Spot
+- **Live QMI8658 6-axis IMU physics**: Tilt left/right to lean & walk, flip upside-down for the authentic `CUBE TURN` tumble & recovery, shake vigorously to make the stickman `DIZZY`.
+- **3 interactive views**:
+  1. **Single Cube** — pure uncluttered 32×32 monochrome toy LCD
+  2. **Linked World** — side-by-side linked mini-cubes with Venetian blind transfer + live 7-nibble protocol monitor
+  3. **Debug / LCD Test** — live IMU crosshair, 32×32 LCD stripe/checkerboard pixel tests, and protocol summary
+- **Real Radica Cube World single-wire protocol codec** (`CubeProtocol`) verified host-side against real 2 MHz logic-analyzer captures.
+
+![stickman pose sheet](assets/sheets/stickman.svg)
+
+## Controls (Waveshare ESP32-S3-LCD-1.54)
+
+Matches the 3-button + motion layout of the original toy (optional CST816 capacitive touch is auto-detected on Touch-LCD-1.54 boards):
+
+| Input | Action |
 |---|---|
-| `firmware/OpenCubeWorld/` | The main app: a live simulated session (HELLO → keepalives → whips → BYE → END) with a protocol monitor. Tap a cube to whip it, tap the corners for 2/3/4-cube sessions and the protocol info screen. |
-| `firmware/Replay_1Whip_1Dodger/` | Replays the **1Whip_1Dodger** capture — one cube whips Dodger: HELLO handshake, keepalives, two whips, BYE + END (real 63 s of traffic, ~15 s on screen). |
-| `firmware/Replay_1Whip_2Handy/` | Replays **1Whip_2Handy** — two whips, both at Handy. |
-| `firmware/Replay_1Whip_2Hans/` | Replays **1Whip_2Hans** — two whips, both at Hans. |
-| `firmware/CubeLink/` | Hardware link mode: listens on the real Cube World data line for HELLO/keepalives/actions from an actual toy and drives the world from live traffic. |
+| **Left button (GPIO 0 / BOOT)** | Short: cycle character (`WHIP`, `DODGER`, `HANS`, `HANDY`, `SCOOP`) · Long: cycle LCD palette (`STN` / `B&W` / `INV`) |
+| **Center button (GPIO 5 / PWR)** | Short: play character signature trick (or WHIP in Linked mode / cycle test pattern in Debug mode) · Long: trigger Dizzy |
+| **Right button (GPIO 4 / KEY)** | Short: switch mode (`Single Cube` → `Linked World` → `Debug`) · Long: Linked-Cube transfer (Venetian blind) |
+| **Tilt / Flip / Shake (QMI8658)** | Lean/shift · Flip upside-down = `CUBE TURN` tumble · Shake = `DIZZY` |
+| **USB Serial (115200)** | `s` status, `c` char, `p` palette, `a` action, `m` mode, `f` flip, `z` shake, `t` transfer |
 
-The three replays decode the exact packets recorded from real toys
-(`tools/captures.json`), scaled in time, and render them through the
-same world engine the live app uses.
+## Build & Flash (PlatformIO)
 
-## The protocol (30-second version)
+Plug in your **Waveshare ESP32-S3-LCD-1.54** (or **ESP32-S3-Touch-LCD-1.54**) over USB-C and run:
+
+```bash
+pio run -e waveshare_esp32s3_lcd_154 -t upload
+pio device monitor -b 115200
+```
+
+Additional environments in `platformio.ini`:
+- `waveshare_cubelink` — live single-wire hardware link to a real Radica Cube World toy (GPIO 11, native 3.3 V)
+- `waveshare_replay_dodger` — replays the captured `1Whip_1Dodger` logic-analyzer session
+
+Full pinout and AVR/Uno fallback details: [`docs/hardware.md`](docs/hardware.md).
+
+## The Protocol (30-second version)
 
 Single wire, pull-up terminated, 3.3 V logic, ~7.4 ms per packet:
 
-```
+```text
 PREAMBLE  L 234us | H 53us | L 94us
 28 BITS   each bit = [H gap | L pulse]
             gap  ~140 before bit 0, ~200 between nibbles, ~100 within
@@ -40,91 +66,52 @@ PREAMBLE  L 234us | H 53us | L 94us
 POSTAMBLE H ~57us | L ~93us
 ```
 
-28 bits = 7 nibbles, MSB first:
-
-| nibble | meaning |
-|---|---|
-| 0 | type: `1` HELLO, `2` KEEPALIVE, `6` ACTION (whip), `7` BYE, `8` END, `9` unknown |
-| 1–4 | payload (slot / action nibbles, 0 when unused) |
-| 5 | sender cube id (re-rolls each session) |
-| 6 | trailer — **always `9`** in all 559 observed packets |
-
-Full spec with measured ranges, session lifecycle, quirks and the
-state machine: **[`docs/protocol.md`](docs/protocol.md)**.
-
-## The characters
-
-Sprite set (4bpp, 16×16, 16-colour palette) in `sprites.h`. The SVG
-sheets in [`assets/sheets/`](assets/sheets/) are checked in; PNG renders
-(raw 16×16 frames under `sprites/`, 8× sheet previews under
-`assets/sheets/`) are generated locally by `tools/gen_images.py`:
-
-| Character | Protocol id | Sheet |
-|---|---|---|
-| Open | 0x01 | [open.svg](assets/sheets/open.svg) |
-| Whip | 0x06 | [whip.svg](assets/sheets/whip.svg) |
-| Dodger | 0x0E | [dodger.svg](assets/sheets/dodger.svg) |
-| Hans | 0x0D | [hans.svg](assets/sheets/hans.svg) |
-| Handy | 0x0B | [handy.svg](assets/sheets/handy.svg) |
-
-Frames: `idle0 idle1 sit dodge wave whip` + whip-arc / dust FX. The
-original hack repo carries no sprite data (it is a protocol probe), so
-this is original placeholder art generated by `tools/gen_sprites.py`
-— swap in your own 16×16 4bpp frames and re-run the tool.
-
-## Build & flash
-
-1. Waveshare 1.54inch Touch LCD Module (SKU 34370) wired to an
-   Arduino Uno (or any 328P board) — pin map in
-   [`docs/hardware.md`](docs/hardware.md).
-2. Arduino IDE: install **Arduino_GFX** (the Waveshare
-   `GFX_Library_for_Arduino` is a fork of it and works too) + **Wire**.
-3. Copy `firmware/libraries/OpenCubeWorld` into your IDE's `libraries/`
-   folder (or into the sketch folder).
-4. Open the sketch you want, select *Arduino Uno*, flash.
-
-The default pin map targets the Waveshare 12-pin cable layout for an
-Uno; every pin can be overridden by `#define`-ing the `OCW_*` names
-before including the library (see `firmware/libraries/OpenCubeWorld/config.h`).
-
-## Repository layout
-
-```
-firmware/
-  OpenCubeWorld/           main app (live simulation + touch)
-  Replay_1Whip_1Dodger/    replay sketch 1  (+ generated replay_data.h)
-  Replay_1Whip_2Handy/     replay sketch 2
-  Replay_1Whip_2Hans/      replay sketch 3
-  CubeLink/                live hardware-link mode
-  libraries/OpenCubeWorld/  world engine, protocol codec, touch, display
-tools/
-  parse_captures.py        .sr capture  -> packets.json
-  gen_replays.py           packets.json -> replay_data.h
-  gen_sprites.py           sprite art   -> sprites.h (+ preview PNGs)
-  gen_images.py            sprites.h    -> assets/*.svg + PNG previews
-  captures.json            the three example captures, decoded
-docs/
-  protocol.md              full reverse-engineered protocol spec
-  hardware.md              wiring & pin map
-sprites/                   16x16 frame PNGs (characters + fx)
-assets/                    banner, screenshot, sprite sheets (SVG + PNG)
-```
+28 bits = 7 nibbles, MSB first (`[0]` type: `1` HELLO, `2` KEEPALIVE, `6` ACTION/WHIP, `7` BYE, `8` END; `[1..4]` payload; `[5]` sender id; `[6]` trailer `9` in 559/559 observed packets). Full spec: [`docs/protocol.md`](docs/protocol.md).
 
 ## Verification
 
-The protocol codec is tested host-side against the **raw 2 MHz logic
-analyzer samples** from the captures: `test/` builds
-`cubeprotocol.cpp` with g++, replays real recorded pulse trains through
-`readPacket()`, and checks that `sendPacket()` drives the exact
-measured pulse train (61/61 segments, 7.4 ms total, inside the
-6.9–7.8 ms window measured on real toys).
+Run the host-side protocol codec test against raw 2 MHz logic-analyzer pulse trains:
+
+```bash
+g++ -std=gnu++17 -Wall -Itest -Itest/stubinc -Ifirmware/libraries/OpenCubeWorld \
+    test/protocol_test.cpp test/sim_arduino.cpp \
+    firmware/libraries/OpenCubeWorld/cubeprotocol.cpp -o /tmp/protocol_test && /tmp/protocol_test
+```
+
+Regenerate `sprites.h`, monochrome PNGs, and SVG assets:
+
+```bash
+python3 tools/gen_sprites.py && python3 tools/gen_images.py
+```
+
+## Repository Layout
+
+```text
+platformio.ini                   ESP32-S3-LCD-1.54 build & upload config
+firmware/
+  OpenCubeWorld/                 main app (32x32 monochrome cube + IMU + buttons + touch)
+  CubeLink/                      live 3.3V single-wire hardware link mode
+  Replay_1Whip_1Dodger/          real capture replay 1
+  Replay_1Whip_2Handy/           real capture replay 2
+  Replay_1Whip_2Hans/            real capture replay 3
+  libraries/OpenCubeWorld/       lcd32, qmi8658, world, cubeprotocol, cst816d, sprites.h
+tools/
+  gen_sprites.py                 1-bit monochrome stickman poses -> sprites.h + PNGs
+  gen_images.py                  monochrome STN LCD SVG assets
+  parse_captures.py              .sr capture -> packets.json
+  gen_replays.py                 packets.json -> replay_data.h
+docs/
+  protocol.md                    full reverse-engineered protocol spec
+  hardware.md                    Waveshare ESP32-S3-LCD-1.54 & Uno pin maps
+test/                            host-side protocol unit tests
+```
 
 ## Credits
 
-- Protocol reverse engineering, captures and sigrok decoder:
-  **[npjg/radica-cube-world-hack](https://github.com/npjg/radica-cube-world-hack)**
-- Display & touch: Waveshare 1.54inch Touch LCD Module (SKU 34370),
-  ST7789S + CST816D, via [Arduino_GFX](https://github.com/moononournation/Arduino_GFX)
+- Protocol reverse engineering, captures & sigrok decoder: [npjg/radica-cube-world-hack](https://github.com/npjg/radica-cube-world-hack)
+- Authentic 32×32 monochrome LCD research & stick-figure reference: [lowthergv/cubeworld](https://github.com/lowthergv/cubeworld) & TCRF
+- Hardware pinout reference: [waveshareteam/ESP32-S3-Touch-LCD-1.54](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.54)
+- Display driver: [Arduino_GFX](https://github.com/moononournation/Arduino_GFX)
 
 ## License
 

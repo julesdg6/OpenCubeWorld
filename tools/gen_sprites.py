@@ -1,288 +1,968 @@
 #!/usr/bin/env python3
 """
-gen_sprites.py - OpenCubeWorld sprite generator.
+gen_sprites.py - Authentic 1-bit monochrome Radica Cube World sprite generator.
 
-Draws 16x16 4-bit-palette pixel art for the Cube World characters, whip
-effects and dust, then emits:
-  1. firmware/tools/../OpenCubeWorld/sprites.h  (PROGMEM sprite tables)
-  2. sprites/**/*.png                            (16x upscaled, transparent)
+The original 2005 Radica Cube World toy uses a 32x32 pixel 1-bit monochrome
+dot-matrix STN LCD displaying solid black stick figures (no color, no cartoon
+blocks, no scenery). This script emits:
+  1. firmware/libraries/OpenCubeWorld/sprites.h  (1-bit PROGMEM bitmaps + 3x5 font)
+  2. sprites/characters/*.png                    (authentic monochrome 32x32 LCD frames)
+  3. sprites/fx/*.png                            (1-bit monochrome props & fx)
 
 Run from anywhere:  python3 tools/gen_sprites.py
-All art is procedural/deterministic so firmware and repo PNGs always match.
+Zero external Python dependencies (uses stdlib zlib/struct for PNG export).
 """
 import os
+import struct
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-# ---------------------------------------------------------------- palette --
-# 16-colour palette shared by every sprite (565 values computed from RGB).
-def rgb565(r, g, b):
-    return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 6)
+# Authentic Radica Cube World 1-bit stick-figure poses.
+# Native 32x32 LCD pixel proportions: 4x5 rounded head, 2px torso and limbs.
+# '#' = LCD pixel ON (dark ink), '.' = LCD pixel OFF (pale STN background).
+POSES = {
+    "IDLE0": [
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        ".....##.....",
+        "...#####....",
+        "..#######...",
+        "..#..##.##..",
+        ".##..##..##.",
+        ".#...##...#.",
+        "##...##...##",
+        ".....##.....",
+        "....####....",
+        "...##..##...",
+        "...##..##...",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        ".###....###.",
+    ],
+    "IDLE1": [
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        ".....##.....",
+        "....####....",
+        "...######...",
+        "...#.##.#...",
+        "..##.##.##..",
+        "..#..##..#..",
+        ".##..##..##.",
+        ".#..####..#.",
+        "....####....",
+        "....#..#....",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "..###..###..",
+    ],
+    "IDLE2": [
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        ".....##.....",
+        "....####....",
+        "...######...",
+        ".###.##.###.",
+        ".##..##..##.",
+        ".....##.....",
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....#..#....",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "...##..##...",
+        "..###..###..",
+    ],
+    "KICK0": [
+        "......##..",
+        ".....####.",
+        ".....####.",
+        ".....####.",
+        "......##..",
+        "....####..",
+        "...######.",
+        "..##.####.",
+        "###..##.##",
+        "##..###..#",
+        "....###.##",
+        "....#####.",
+        "...#####..",
+        "...##..#..",
+        "..###..##.",
+        "..###..##.",
+        "..##...##.",
+        ".###...##.",
+        ".#.....##.",
+        ".......##.",
+        ".......##.",
+        ".......###",
+    ],
+    "KICK1": [
+        "...........##.",
+        "..........####",
+        "..........####",
+        "..........####",
+        ".############.",
+        ".##....######.",
+        "........#####.",
+        ".......####.##",
+        ".....#####...#",
+        "..#########.##",
+        ".###....#####.",
+        ".##......##...",
+        ".##......##...",
+        "###......##...",
+        ".........##...",
+        ".........##...",
+        ".........##...",
+        ".........##...",
+        ".........##...",
+        ".........##...",
+        ".........###..",
+    ],
+    "STRETCH0": [
+        ".....##.....",
+        "....####....",
+        "....####....",
+        ".#..####..#.",
+        ".##..##..##.",
+        "..########..",
+        "...######...",
+        ".....##.....",
+        ".....##.....",
+        ".....##.....",
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....#..#....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        ".....##.....",
+    ],
+    "STRETCH1": [
+        ".....##.....",
+        "....####....",
+        ".#..####..#.",
+        ".##.####.##.",
+        "..#..##..#..",
+        "..########..",
+        "...######...",
+        ".....##.....",
+        ".....##.....",
+        ".....##.....",
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....#..#....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "....####....",
+        ".....##.....",
+        ".....##.....",
+    ],
+    "SIT0": [
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        "...#####....",
+        "..##.####...",
+        "..#..##.##..",
+        ".##.######..",
+        ".##########.",
+        "#####...####",
+        ".#####.###..",
+        "....#####...",
+        ".....###....",
+        "....#####...",
+    ],
+    "SIT1": [
+        ".....##.....",
+        "....####....",
+        "....####....",
+        "....####....",
+        ".....##.....",
+        "....####....",
+        "...######...",
+        "..##.##.##..",
+        ".##.####.##.",
+        "############",
+        "##..####..##",
+        "..########..",
+    ],
+    "MAD0": [
+        "......##....",
+        ".....####...",
+        ".....####...",
+        ".....####...",
+        "......##....",
+        ".....####...",
+        "....######..",
+        "...##.##.##.",
+        "..##..##...#",
+        ".##...##..##",
+        "##....#####.",
+        "##....####..",
+        ".....####...",
+        ".....####...",
+        "....##..##..",
+        "....##..##..",
+        "....##..##..",
+        "....##..##..",
+        "...##....##.",
+        "...##....##.",
+        "...##....##.",
+        "..###....###",
+    ],
+    "MAD1": [
+        "......##....",
+        ".....####...",
+        ".....####...",
+        ".....####...",
+        "......##....",
+        ".....####...",
+        "....######..",
+        "##.##.##.##.",
+        "####..##...#",
+        ".##...##..##",
+        "......#####.",
+        "......####..",
+        ".....####...",
+        ".....####...",
+        "....##..##..",
+        "....##..##..",
+        "....##..##..",
+        "....##..##..",
+        "...##....##.",
+        "...##....##.",
+        "...##....##.",
+        "..###....###",
+    ],
+    "MAD2": [
+        "....##....",
+        "...####...",
+        "...####...",
+        "...####...",
+        "....##....",
+        "...####...",
+        "..######..",
+        "###.##.###",
+        "#...##...#",
+        "##..##..##",
+        "##..##..##",
+        "##..##..##",
+        "...####...",
+        "...####...",
+        "..##..##..",
+        "..##..##..",
+        "..##..##..",
+        "..##..##..",
+        ".##....##.",
+        ".##....##.",
+        ".##....##.",
+        "###....###",
+    ],
+    "ITCH0": [
+        ".....##.....",
+        "....####..#.",
+        "....####.##.",
+        "....######..",
+        ".....##.##..",
+        "...#####....",
+        "..#######...",
+        "..#..##.....",
+        ".##..##.....",
+        ".#...##.....",
+        "##...##.....",
+        ".....##.....",
+        "....####....",
+        "...##..##...",
+        "...##..##...",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        ".###....###.",
+    ],
+    "ITCH1": [
+        ".....##..#..",
+        "....######..",
+        "....####.#..",
+        "....####.##.",
+        ".....##..##.",
+        "...#######..",
+        "..#######...",
+        "..#..##.....",
+        ".##..##.....",
+        ".#...##.....",
+        "##...##.....",
+        ".....##.....",
+        "....####....",
+        "...##..##...",
+        "...##..##...",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        "..##....##..",
+        ".###....###.",
+    ],
+    "WAVE0": [
+        "........##....",
+        ".......####...",
+        "##.....####...",
+        "###....####...",
+        "..###...##....",
+        "...#######....",
+        "......#####...",
+        ".......####...",
+        ".......##.##..",
+        ".......##..#..",
+        "......##...##.",
+        "......##....##",
+        ".....####...##",
+        "....##..##....",
+        "....##..##....",
+        "...##....##...",
+        "...##....##...",
+        "...##....##...",
+        "...##....##...",
+        "...##....##...",
+        "..###....###..",
+    ],
+    "WAVE1": [
+        "......##......",
+        ".....####.....",
+        ".....####.....",
+        ".....####.....",
+        "#.....##.....#",
+        ".#..#####...#.",
+        "..##########..",
+        "......##......",
+        "......##......",
+        "......##......",
+        "......##......",
+        "......##......",
+        ".....####.....",
+        "....##..##....",
+        "....##..##....",
+        "...##....##...",
+        "...##....##...",
+        "...##....##...",
+        "...##....##...",
+        "...##....##...",
+        "..###....###..",
+    ],
+    "WALK0": [
+        "....##.....",
+        "...####....",
+        "...####....",
+        "...####....",
+        "....##.....",
+        "...#####...",
+        "...######..",
+        "..####..#..",
+        ".##.##..##.",
+        ".#..##...#.",
+        "##...##..#.",
+        "#....##..##",
+        "....####...",
+        "...##.##...",
+        "...##.##...",
+        "..##...##..",
+        "..##...##..",
+        "..##...##..",
+        "..##...##..",
+        "..##...##..",
+        ".###...###.",
+    ],
+    "WALK1": [
+        ".....##....",
+        "....####...",
+        "....####...",
+        "....####...",
+        ".....##....",
+        "...####....",
+        "..######...",
+        ".##.####...",
+        ".#..#####..",
+        "##..##..#..",
+        "#...##..###",
+        "#...##...##",
+        "...####....",
+        "...####....",
+        "...####....",
+        "...##.##...",
+        "...##.##...",
+        "...##.##...",
+        "..###.##...",
+        "..##..##...",
+        "..###.###..",
+    ],
+    "WALK2": [
+        "....##.......",
+        "...####......",
+        "...####......",
+        "...####......",
+        "....###......",
+        "....#####....",
+        "...#######...",
+        "...####..##..",
+        "...#.##...##.",
+        "..##.##....##",
+        ".##..###.....",
+        "......##.....",
+        ".....###.....",
+        "....####.....",
+        "....##.#.....",
+        "...##..##....",
+        "..###..##....",
+        ".###...##....",
+        "###....##....",
+        "......###....",
+    ],
+    "WALK3": [
+        ".....##....",
+        "....####...",
+        "....####...",
+        "....####...",
+        ".....##....",
+        "...#####...",
+        "..######...",
+        "..#..####..",
+        ".##..##.##.",
+        ".#...##..#.",
+        ".#..##...##",
+        "##..##....#",
+        "...####....",
+        "...##.##...",
+        "...##.##...",
+        "..##...##..",
+        "..##...##..",
+        "..##...##..",
+        "..##...##..",
+        "..##...##..",
+        ".###...###.",
+    ],
+    "WHIP0": [
+        ".......##.....",
+        "......####....",
+        "......####....",
+        "......####....",
+        ".......##.....",
+        "......####....",
+        "##...######...",
+        ".#..##.##.##..",
+        "..###..##..##.",
+        ".......##...#.",
+        ".......##...##",
+        ".......##.....",
+        "......####....",
+        ".....##..##...",
+        ".....##..##...",
+        "....##....##..",
+        "....##....##..",
+        "....##....##..",
+        "....##....##..",
+        "....##....##..",
+        "...###....###.",
+    ],
+    "WHIP1": [
+        ".......##.....",
+        "......####....",
+        "......####....",
+        "......####....",
+        ".......##.....",
+        "##...#####....",
+        "###########...",
+        ".......##.##..",
+        ".......##..##.",
+        ".......##...#.",
+        ".......##...##",
+        ".......##.....",
+        "......####....",
+        ".....##..##...",
+        ".....##..##...",
+        "....##....##..",
+        "....##....##..",
+        "....##....##..",
+        "....##....##..",
+        "....##....##..",
+        "...###....###.",
+    ],
+    "DODGE0": [
+        ".....##......",
+        "....####.....",
+        "....####.....",
+        "....####.....",
+        ".....##......",
+        "....#####....",
+        "...########..",
+        "..##.##...##.",
+        "..#...##...##",
+        ".##...##.....",
+        ".#...####....",
+        "##..##.##....",
+        "...###..##...",
+        "...##....##..",
+        "...##....##..",
+        "....##...###.",
+        "....##....##.",
+        "...###....###",
+    ],
+    "DODGE1": [
+        ".......###......",
+        "......#####.....",
+        ".....######.....",
+        ".....########...",
+        "....##########..",
+        "...######....##.",
+        "...#######....##",
+        "...#######.....#",
+        "..###.##.##.....",
+        "..##...##.##....",
+        "..##...##.##....",
+        ".##.....##......",
+        ".##...####......",
+        "###..###........",
+    ],
+    "DIZZY0": [
+        "..##........",
+        ".####.......",
+        ".####.......",
+        ".#######....",
+        "..#######...",
+        "...###..##..",
+        "..####...##.",
+        "..#.##....##",
+        ".##.##......",
+        "##..###.....",
+        "#....##.....",
+        "....###.....",
+        "...#####....",
+        "...##.##....",
+        "..##..##....",
+        "..##..###...",
+        "..##...##...",
+        "..##....##..",
+        "####...###..",
+    ],
+    "DIZZY1": [
+        "....##......",
+        "...####.....",
+        "...#####....",
+        "...######...",
+        "....######..",
+        "....#.#####.",
+        "....#.#####.",
+        "..#.#.#####.",
+        ".##########.",
+        "###########.",
+        ".#.#######..",
+        "....###.##..",
+        "....##.###..",
+        "....##.####.",
+        ".....##..###",
+        ".....##...##",
+        "....###..###",
+    ],
+    "DIZZY2": [
+        "....##......",
+        "...####.....",
+        "...#####....",
+        "...######...",
+        "....######..",
+        "....#.#####.",
+        "....#.#####.",
+        "....#.#####.",
+        "...########.",
+        "...########.",
+        "...#######..",
+        "....###.##..",
+        "....##.###..",
+        "....##.####.",
+        ".#...##..###",
+        ".##..##...##",
+        "#######..###",
+    ],
+    "TUMBLE_FALL": [
+        "##....##........",
+        ".##..##....###..",
+        "..####....#####.",
+        "...####..######.",
+        "....###########.",
+        ".....#####.###..",
+        "....##..###.....",
+        "...##....##.....",
+        "..##......##....",
+        ".##........##...",
+    ],
+    "TUMBLE_FLAT": [
+        "....####............",
+        "...######...........",
+        "###################.",
+        ".##################.",
+        "....####........###.",
+    ],
+    "TUMBLE_PUSH": [
+        "...####.........",
+        "..######........",
+        "..####.###......",
+        "...###..####....",
+        "..##.....#####..",
+        ".##....##...###.",
+        "###...###....###",
+    ],
+    "TUMBLE_KNEEL": [
+        "....##......",
+        "...####.....",
+        "...####.....",
+        "...####.....",
+        "....##......",
+        "...#####....",
+        "..#######...",
+        ".##..##.##..",
+        "##...##..##.",
+        ".....#####..",
+        "....###.###.",
+        "...##....###",
+        "..####...###",
+    ],
+}
 
-PALETTE_RGB = [
-    (0, 0, 0),       # 0  transparent
-    (20, 16, 32),    # 1  ink (outline, pupils, mouth)
-    (255, 255, 255), # 2  white (eyes)
-    (120, 128, 140), # 3  mid gray (dust)
-    (51, 170, 85),   # 4  green body   (Open)
-    (226, 60, 54),   # 5  red body     (Whip)
-    (58, 110, 224),  # 6  blue body    (Dodger)
-    (235, 140, 42),  # 7  orange body  (Hans)
-    (150, 84, 214),  # 8  purple body  (Handy)
-    (240, 200, 60),  # 9  yellow       (spare)
-    (24, 110, 56),   # 10 dark green
-    (140, 34, 30),   # 11 dark red
-    (34, 70, 150),   # 12 dark blue
-    (160, 92, 24),   # 13 dark orange
-    (96, 50, 140),   # 14 dark purple
-    (220, 228, 235), # 15 highlight
-]
-PALETTE_565 = [rgb565(*c) for c in PALETTE_RGB]
+# 1-bit monochrome props & FX (pure black pixels on the 32x32 LCD)
+PROPS = {
+    "WHIP_ARC0": [
+        "......##",
+        ".....##.",
+        "....##..",
+        "...##...",
+        "..##....",
+        ".##.....",
+    ],
+    "WHIP_ARC1": [
+        ".........###",
+        ".......###..",
+        ".....###....",
+        "...###......",
+        ".###........",
+        "##..........",
+    ],
+    "WHIP_ARC2": [
+        "..........#.",
+        ".........###",
+        ".......###.#",
+        ".....###....",
+        "..####......",
+        "###.........",
+    ],
+    "BALL": [
+        ".###.",
+        "##.##",
+        "#####",
+        "#####",
+        ".###.",
+    ],
+    "DUMBBELL": [
+        "##.......##",
+        "##.......##",
+        "###########",
+        "##.......##",
+        "##.......##",
+    ],
+    "WRENCH": [
+        ".##.....##.",
+        "###....###.",
+        "..#######..",
+        "###....###.",
+        ".##.....##.",
+    ],
+    "DOG0": [
+        ".......##..",
+        "#.....####.",
+        ".#....#####",
+        "..########.",
+        "..#######..",
+        "..##...##..",
+        "..##...##..",
+    ],
+    "DOG1": [
+        ".......##..",
+        ".#....####.",
+        ".#....#####",
+        "..########.",
+        "..#######..",
+        ".##.....##.",
+        "##.......##",
+    ],
+    "DUST0": [
+        ".#.#.",
+        "##.##",
+        ".#.#.",
+    ],
+    "DUST1": [
+        "#...#",
+        "..#..",
+        "#.#.#",
+        ".#.#.",
+    ],
+    "Z_SM": [
+        "####",
+        "..#.",
+        ".#..",
+        "####",
+    ],
+    "Z_LG": [
+        "#####",
+        "...#.",
+        "..#..",
+        ".#...",
+        "#####",
+    ],
+}
 
-# --------------------------------------------------------------- canvas ----
-W = H = 16
+# Compact 3x5 monochrome LCD pixel font (ASCII 32..95)
+FONT_3X5 = {
+    ' ': [0b000, 0b000, 0b000, 0b000, 0b000],
+    '!': [0b010, 0b010, 0b010, 0b000, 0b010],
+    '-': [0b000, 0b000, 0b111, 0b000, 0b000],
+    '.': [0b000, 0b000, 0b000, 0b000, 0b010],
+    '/': [0b001, 0b001, 0b010, 0b100, 0b100],
+    ':': [0b000, 0b010, 0b000, 0b010, 0b000],
+    '+': [0b000, 0b010, 0b111, 0b010, 0b000],
+    '?': [0b110, 0b001, 0b010, 0b000, 0b010],
+    '0': [0b111, 0b101, 0b101, 0b101, 0b111],
+    '1': [0b010, 0b110, 0b010, 0b010, 0b111],
+    '2': [0b111, 0b001, 0b111, 0b100, 0b111],
+    '3': [0b111, 0b001, 0b111, 0b001, 0b111],
+    '4': [0b101, 0b101, 0b111, 0b001, 0b001],
+    '5': [0b111, 0b100, 0b111, 0b001, 0b111],
+    '6': [0b111, 0b100, 0b111, 0b101, 0b111],
+    '7': [0b111, 0b001, 0b001, 0b010, 0b010],
+    '8': [0b111, 0b101, 0b111, 0b101, 0b111],
+    '9': [0b111, 0b101, 0b111, 0b001, 0b111],
+    'A': [0b010, 0b101, 0b111, 0b101, 0b101],
+    'B': [0b110, 0b101, 0b110, 0b101, 0b110],
+    'C': [0b011, 0b100, 0b100, 0b100, 0b011],
+    'D': [0b110, 0b101, 0b101, 0b101, 0b110],
+    'E': [0b111, 0b100, 0b110, 0b100, 0b111],
+    'F': [0b111, 0b100, 0b110, 0b100, 0b100],
+    'G': [0b011, 0b100, 0b101, 0b101, 0b011],
+    'H': [0b101, 0b101, 0b111, 0b101, 0b101],
+    'I': [0b111, 0b010, 0b010, 0b010, 0b111],
+    'J': [0b001, 0b001, 0b001, 0b101, 0b010],
+    'K': [0b101, 0b101, 0b110, 0b101, 0b101],
+    'L': [0b100, 0b100, 0b100, 0b100, 0b111],
+    'M': [0b101, 0b111, 0b111, 0b101, 0b101],
+    'N': [0b110, 0b101, 0b101, 0b101, 0b101],
+    'O': [0b010, 0b101, 0b101, 0b101, 0b010],
+    'P': [0b110, 0b101, 0b110, 0b100, 0b100],
+    'Q': [0b010, 0b101, 0b101, 0b111, 0b001],
+    'R': [0b110, 0b101, 0b110, 0b101, 0b101],
+    'S': [0b011, 0b100, 0b010, 0b001, 0b110],
+    'T': [0b111, 0b010, 0b010, 0b010, 0b010],
+    'U': [0b101, 0b101, 0b101, 0b101, 0b111],
+    'V': [0b101, 0b101, 0b101, 0b101, 0b010],
+    'W': [0b101, 0b101, 0b111, 0b111, 0b101],
+    'X': [0b101, 0b101, 0b010, 0b101, 0b101],
+    'Y': [0b101, 0b101, 0b010, 0b010, 0b010],
+    'Z': [0b111, 0b001, 0b010, 0b100, 0b111],
+}
 
-class Canvas:
-    def __init__(self):
-        self.px = [[0] * W for _ in range(H)]
 
-    def put(self, x, y, c):
-        if 0 <= x < W and 0 <= y < H:
-            self.px[y][x] = c
+def rows_to_u32(rows):
+    w = len(rows[0])
+    out = []
+    for r in rows:
+        assert len(r) == w, f"Row width mismatch: {len(r)} != {w}"
+        v = 0
+        for ch in r:
+            v = (v << 1) | (1 if ch == "#" else 0)
+        out.append(v)
+    return w, len(rows), out
 
-    def rect(self, x0, y0, x1, y1, c):
-        for y in range(y0, y1 + 1):
-            for x in range(x0, x1 + 1):
-                self.put(x, y, c)
 
-    def hline(self, x0, x1, y, c):
-        self.rect(x0, y, x1, y, c)
+def write_png_rgb(path, width, height, rgb_bytes):
+    def chunk(tag, data):
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
 
-    def rounded_rect(self, x0, y0, x1, y1, c, r=1):
-        self.rect(x0 + r, y0, x1 - r, y1, c)
-        self.rect(x0, y0 + r, x1, y1 - r, c)
-        self.put(x0 + r, y0, c); self.put(x1 - r, y0, c)
-        self.put(x0 + r, y1, c); self.put(x1 - r, y1, c)
+    raw = bytearray()
+    stride = width * 3
+    for y in range(height):
+        raw.append(0)
+        raw.extend(rgb_bytes[y * stride : (y + 1) * stride])
 
-# ---------------------------------------------------------- characters -----
-# Each character: (name, body, shade, hat, pupil_dx)
-CHARACTERS = [
-    dict(name="open",   body=4, shade=10, hat="antenna",  pupil_dx=0),
-    dict(name="whip",   body=5, shade=11, hat="zigzag",   pupil_dx=1),
-    dict(name="dodger", body=6, shade=12, hat="nubs",     pupil_dx=1),
-    dict(name="hans",   body=7, shade=13, hat="cap",      pupil_dx=0),
-    dict(name="handy",  body=8, shade=14, hat="bow",      pupil_dx=-1),
-]
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
+    )
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(png)
 
-INK, WHITE, HILITE = 1, 2, 15
 
-def draw_hat(cv, kind, body, shade, dy=0):
-    """Small personality marker on the crown of the cube (rows 1-2)."""
-    y = 2 + dy
-    if kind == "antenna":
-        cv.put(7, 1 + dy, shade); cv.put(8, 1 + dy, shade)
-        cv.put(8, 2 + dy, body)
-    elif kind == "zigzag":
-        cv.put(5, 2 + dy, shade); cv.put(7, 1 + dy, shade)
-        cv.put(9, 2 + dy, shade); cv.put(11, 1 + dy, shade)
-    elif kind == "nubs":
-        cv.rect(4, 1 + dy, 5, 2 + dy, shade)
-        cv.rect(10, 1 + dy, 11, 2 + dy, shade)
-    elif kind == "cap":
-        cv.hline(5, 10, 2 + dy, shade)
-        cv.hline(5, 10, 1 + dy, body)
-    elif kind == "bow":
-        cv.put(6, 2 + dy, shade); cv.put(9, 2 + dy, shade)
-        cv.put(7, 1 + dy, shade); cv.put(8, 1 + dy, shade)
+def render_lcd32_png(rows, path, scale=6, invert=False):
+    """Render a pose centered on a 32x32 STN monochrome LCD canvas."""
+    w = len(rows[0])
+    h = len(rows)
+    grid = [[1 if invert else 0] * 32 for _ in range(32)]
+    ox = (32 - w) // 2
+    oy = 30 - h
+    for y, r in enumerate(rows):
+        for x, ch in enumerate(r):
+            if ch == "#" and 0 <= ox + x < 32 and 0 <= oy + y < 32:
+                grid[oy + y][ox + x] = 0 if invert else 1
 
-def draw_body(cv, body, shade, dy=0):
-    cv.rounded_rect(2, 3 + dy, 13, 14, body)
-    cv.hline(3, 5, 4 + dy, HILITE)          # top highlight
-    cv.hline(3, 13, 13, shade)              # bottom shade
-    cv.vline = lambda: None
-    for y in range(5 + dy, 13):
-        cv.put(2, y, shade); cv.put(13, y, shade)
+    # Classic Radica STN monochrome palette
+    off_col = (188, 200, 174)
+    on_col = (24, 31, 22)
+    gap_col = (176, 188, 160)
 
-def draw_eyes(cv, mode, dx=0):
-    # big cartoon eyes: white 3x3, 1x1 pupil
-    for ex in (4, 9):
-        cv.rect(ex, 6, ex + 2, 8, WHITE)
-        if mode == "idle":
-            cv.put(ex + 1 + dx, 7, INK)
-        elif mode == "squint":
-            cv.rect(ex, 7, ex + 2, 7, INK)
-        elif mode == "wide":
-            cv.put(ex + 1 + dx, 7, INK)
-            cv.put(ex + 1 + dx, 8, INK)
-        elif mode == "x":
-            cv.put(ex, 6, INK); cv.put(ex + 2, 8, INK)
-            cv.put(ex + 2, 6, INK); cv.put(ex, 8, INK)
-        elif mode == "happy":
-            cv.rect(ex, 7, ex + 2, 8, INK)
+    W = 32 * scale
+    H = 32 * scale
+    buf = bytearray(W * H * 3)
+    for py in range(32):
+        for px in range(32):
+            c = on_col if grid[py][px] else off_col
+            for sy in range(scale):
+                for sx in range(scale):
+                    col = gap_col if (scale >= 4 and (sx == scale - 1 or sy == scale - 1)) else c
+                    idx = ((py * scale + sy) * W + (px * scale + sx)) * 3
+                    buf[idx : idx + 3] = bytes(col)
+    write_png_rgb(path, W, H, buf)
 
-def draw_mouth(cv, mode):
-    if mode == "smile":
-        cv.put(6, 11, INK); cv.put(7, 12, INK)
-        cv.put(8, 12, INK); cv.put(9, 11, INK)
-    elif mode == "open":
-        cv.rect(6, 11, 9, 13, INK)
-        cv.rect(7, 12, 8, 12, WHITE)
-    elif mode == "big":
-        cv.rect(5, 11, 10, 13, INK)
-        cv.rect(6, 12, 9, 13, WHITE)
-    elif mode == "o":
-        cv.rect(7, 11, 8, 12, INK)
 
-def draw_char(char, variant):
-    """variant: idle0 idle1 whip dodge wave sit"""
-    cv = Canvas()
-    body, shade, hat, pdx = char["body"], char["shade"], char["hat"], char["pupil_dx"]
-    dy = 0
-    if variant == "idle1":
-        dy = 1
-    if variant == "sit":
-        dy = 2
-    if variant == "dodge":
-        dy = 1
-    draw_hat(cv, hat, body, shade, dy=dy)
-    draw_body(cv, body, shade, dy=dy)
-    if variant == "idle0":
-        draw_eyes(cv, "idle", pdx)
-        draw_mouth(cv, "smile")
-    elif variant == "idle1":
-        draw_eyes(cv, "squint", pdx)
-        draw_mouth(cv, "smile")
-    elif variant == "whip":
-        draw_eyes(cv, "wide", pdx)
-        draw_mouth(cv, "open")
-    elif variant == "dodge":
-        draw_eyes(cv, "x", pdx)
-        draw_mouth(cv, "o")
-    elif variant == "wave":
-        draw_eyes(cv, "happy", pdx)
-        draw_mouth(cv, "big")
-    elif variant == "sit":
-        draw_eyes(cv, "squint", pdx)
-        draw_mouth(cv, "o")
-    if variant == "wave":
-        cv.put(13, 3, body); cv.put(13, 2, body)   # raised nub (waving)
-    return cv
-
-# ------------------------------------------------------------------ fx -----
-def draw_whip_frame(f):
-    cv = Canvas()
-    if f == 0:
-        for i in range(4):
-            cv.put(2 + i, 2 + i, WHITE); cv.put(3 + i, 3 + i, 2)
-    elif f == 1:
-        for i in range(8):
-            cv.put(2 + i, 2 + i, WHITE); cv.put(3 + i, 3 + i, 9)
-            if 2 <= i < 7:
-                cv.put(1 + i, 1 + i, WHITE)
-    else:
-        for i in range(8):
-            cv.put(2 + i, 2 + i, WHITE)
-        cv.put(10, 10, 9); cv.put(11, 10, 9); cv.put(12, 10, 9)
-        cv.put(10, 11, 9); cv.put(10, 12, 9)
-        cv.put(12, 12, 2)
-    return cv
-
-def draw_dust(f):
-    cv = Canvas()
-    if f == 0:
-        cv.put(5, 12, 3); cv.put(7, 11, 3); cv.put(9, 12, 3)
-        cv.put(6, 13, 3); cv.put(8, 13, 3); cv.put(10, 13, 3)
-    else:
-        cv.put(4, 10, 3); cv.put(7, 9, 3); cv.put(10, 10, 3)
-        cv.put(5, 11, 3); cv.put(8, 11, 3); cv.put(11, 11, 3)
-    return cv
-
-# ------------------------------------------------------------- emit -------
-VARIANTS = ["idle0", "idle1", "whip", "dodge", "wave", "sit"]
-FRAME = {v: i for i, v in enumerate(VARIANTS)}
-
-def to_bytes(cv):
-    out = bytearray(128)
-    for y in range(H):
-        for x in range(W):
-            out[(y * W + x) // 2] |= (cv.px[y][x] & 0xF) << (4 if (x & 1) == 0 else 0)
-    return bytes(out)
-
-def png_save(cv, path, scale=16):
-    try:
-        from PIL import Image
-    except ImportError:
-        return
-    img = Image.new("RGBA", (W * scale, H * scale), (0, 0, 0, 0))
-    for y in range(H):
-        for x in range(W):
-            idx = cv.px[y][x]
-            if idx == 0:
-                continue
-            r, g, b = PALETTE_RGB[idx]
-            img.putpixel((x * scale, y * scale), (r, g, b, 255))
-    img.resize((W * scale, H * scale), Image.NEAREST)
-    img.save(path)
-
-def emit_header(chars, whip_frames, dust_frames, path):
-    L = []
-    L.append("// Auto-generated by tools/gen_sprites.py - DO NOT EDIT BY HAND.")
-    L.append("// 16x16 sprites, 4-bit palette, MSB-first, row-major.")
-    L.append("#pragma once")
-    L.append("#include <Arduino.h>")
-    L.append("")
-    L.append("static const uint16_t OCW_PALETTE[16] PROGMEM = {")
-    L.append("  " + ", ".join("0x%04X" % v for v in PALETTE_565) + ",")
+def emit_header(path):
+    L = [
+        "// Auto-generated by tools/gen_sprites.py - DO NOT EDIT BY HAND.",
+        "// Authentic 1-bit monochrome Radica Cube World 32x32 LCD stick-figure sprites.",
+        "// Bit (w - 1 - x) of each row word is pixel x (1 = LCD ON / dark ink).",
+        "#pragma once",
+        "#include <Arduino.h>",
+        "",
+        "struct OcwSprite1B {",
+        "  uint8_t w;",
+        "  uint8_t h;",
+        "  const uint32_t *rows;",
+        "};",
+        "",
+        "// Authentic Radica stickman poses",
+        "enum OcwPose {",
+    ]
+    for idx, name in enumerate(POSES.keys()):
+        L.append(f"  OCW_POSE_{name} = {idx},")
+    L.append(f"  OCW_N_POSES = {len(POSES)}")
     L.append("};")
     L.append("")
-    L.append("static const char *const OCW_CHAR_NAMES[] PROGMEM = { " +
-             ", ".join('"%s"' % c["name"] for c in chars) + " };")
-    L.append("")
-    L.append("// frame indices")
-    for v in VARIANTS:
-        L.append("#define OCW_FR_%s %d" % (v.upper(), FRAME[v]))
-    L.append("#define OCW_NFRAMES %d" % len(VARIANTS))
-    L.append("")
-    for c in chars:
-        L.append("static const uint8_t ocw_%s[6][128] PROGMEM = {" % c["name"])
-        for v in VARIANTS:
-            b = to_bytes(draw_char(c, v))
-            L.append("  {" + ", ".join(str(x) for x in b) + "},  // %s" % v)
-        L.append("};")
-        L.append("")
-    L.append("static const uint8_t ocw_fx_whip[3][128] PROGMEM = {")
-    for f in whip_frames:
-        b = to_bytes(f)
-        L.append("  {" + ", ".join(str(x) for x in b) + "},")
+
+    L.append("// 1-bit monochrome character props & FX")
+    L.append("enum OcwProp {")
+    for idx, name in enumerate(PROPS.keys()):
+        L.append(f"  OCW_PROP_{name} = {idx},")
+    L.append(f"  OCW_N_PROPS = {len(PROPS)}")
     L.append("};")
     L.append("")
-    L.append("static const uint8_t ocw_fx_dust[2][128] PROGMEM = {")
-    for f in dust_frames:
-        b = to_bytes(f)
-        L.append("  {" + ", ".join(str(x) for x in b) + "},")
+
+    for name, rows in POSES.items():
+        w, h, words = rows_to_u32(rows)
+        hexw = ", ".join(f"0x{v:06X}UL" for v in words)
+        L.append(f"static const uint32_t ocw_pose_{name.lower()}_rows[{h}] PROGMEM = {{ {hexw} }};")
+    L.append("")
+    L.append("static const OcwSprite1B OCW_POSES[OCW_N_POSES] = {")
+    for name, rows in POSES.items():
+        w, h, _ = rows_to_u32(rows)
+        L.append(f"  {{ {w}, {h}, ocw_pose_{name.lower()}_rows }}, // {name}")
     L.append("};")
+    L.append("")
+
+    for name, rows in PROPS.items():
+        w, h, words = rows_to_u32(rows)
+        hexw = ", ".join(f"0x{v:04X}UL" for v in words)
+        L.append(f"static const uint32_t ocw_prop_{name.lower()}_rows[{h}] PROGMEM = {{ {hexw} }};")
+    L.append("")
+    L.append("static const OcwSprite1B OCW_PROPS[OCW_N_PROPS] = {")
+    for name, rows in PROPS.items():
+        w, h, _ = rows_to_u32(rows)
+        L.append(f"  {{ {w}, {h}, ocw_prop_{name.lower()}_rows }}, // {name}")
+    L.append("};")
+    L.append("")
+
+    # Emit 3x5 pixel font lookup helper
+    L.append("// 3x5 monochrome LCD pixel font (5 rows, bits 2..0 = x 0..2)")
+    L.append("static inline uint8_t ocwFont3x5Row(char c, uint8_t row) {")
+    L.append("  if (row >= 5) return 0;")
+    L.append("  if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');")
+    L.append("  switch (c) {")
+    for ch, rows in FONT_3X5.items():
+        packed = ", ".join(str(r) for r in rows)
+        esc = ch
+        L.append(f"    case '{esc}': {{ static const uint8_t g[5] = {{{packed}}}; return g[row]; }}")
+    L.append("    default: return 0;")
+    L.append("  }")
+    L.append("}")
+    L.append("")
+
     with open(path, "w") as f:
         f.write("\n".join(L) + "\n")
 
+
 def main():
-    chars = []
-    os.makedirs(os.path.join(ROOT, "sprites", "characters"), exist_ok=True)
-    for c in CHARACTERS:
-        canvases = {v: draw_char(c, v) for v in VARIANTS}
-        chars.append(canvases)
-        base = os.path.join(ROOT, "sprites", "characters")
-        for v in VARIANTS:
-            png_save(canvases[v], os.path.join(base, "%s_%s.png" % (c["name"], v)))
-    whip = [draw_whip_frame(f) for f in range(3)]
-    dust = [draw_dust(f) for f in range(2)]
-    os.makedirs(os.path.join(ROOT, "sprites", "fx"), exist_ok=True)
-    for f, cv in enumerate(whip):
-        png_save(cv, os.path.join(ROOT, "sprites", "fx", "whip_%d.png" % f))
-    for f, cv in enumerate(dust):
-        png_save(cv, os.path.join(ROOT, "sprites", "fx", "dust_%d.png" % f))
-    emit_header(CHARACTERS, whip, dust, os.path.join(ROOT, "firmware", "libraries", "OpenCubeWorld", "sprites.h"))
-    print("sprites.h written; %d characters x %d frames + fx" % (len(chars), len(VARIANTS)))
+    header_path = os.path.join(ROOT, "firmware", "libraries", "OpenCubeWorld", "sprites.h")
+    emit_header(header_path)
+
+    # Remove stale duplicate header under firmware/OpenCubeWorld/ if present
+    dup = os.path.join(ROOT, "firmware", "OpenCubeWorld", "sprites.h")
+    if os.path.exists(dup):
+        os.remove(dup)
+
+    # Export monochrome 32x32 LCD preview PNGs
+    for name, rows in POSES.items():
+        out = os.path.join(ROOT, "sprites", "poses", f"{name.lower()}.png")
+        render_lcd32_png(rows, out, scale=6)
+    for name, rows in PROPS.items():
+        out = os.path.join(ROOT, "sprites", "fx", f"{name.lower()}.png")
+        render_lcd32_png(rows, out, scale=6)
+
+    print(f"Generated {header_path}: {len(POSES)} 1-bit stickman poses + {len(PROPS)} props + 3x5 LCD font")
+
 
 if __name__ == "__main__":
     main()

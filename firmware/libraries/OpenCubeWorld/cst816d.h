@@ -1,40 +1,31 @@
 /*
- * cst816d.h / cst816d.cpp - Capacitive touch driver for the CST816D chip
- * on the Waveshare 1.54inch Touch LCD Module (SKU 34370, ST7789S display).
- *
- * Vendored from the official Waveshare example package:
- *   https://github.com/waveshareteam/1.54inch-Touch-LCD-Module
- *   (example/Arduino-uno/examples/cst816d.{h,cpp})
- * Unmodified except for formatting.
+ * cst816d.h - CST816D/CST816S capacitive touch driver (I2C @ 0x15).
+ * Auto-detects hardware presence so non-touch Waveshare ESP32-S3-LCD-1.54
+ * boards run cleanly without blocking.
  */
 #pragma once
-
-#include <stdint.h>
 #include <Arduino.h>
 #include <Wire.h>
 
-#define TP_I2C_FREQ 400000
-#define CST816D_ADDR 0x15
-#define CST816D_ID_REG 0xA7
+#define CST816D_ADDR           0x15
+#define CST816D_TOUCH_NUM_REG  0x02
+#define CST816D_TOUCH_XH_REG   0x03
+#define CST816D_TOUCH_XL_REG   0x04
+#define CST816D_TOUCH_YH_REG   0x05
+#define CST816D_TOUCH_YL_REG   0x06
+#define CST816D_ID_REG         0xA7
 
-#define CST816D_TOUCH_NUM_REG 0x02
-#define CST816D_TOUCH_XH_REG 0x03
-#define CST816D_TOUCH_XL_REG 0x04
-#define CST816D_TOUCH_YH_REG 0x05
-#define CST816D_TOUCH_YL_REG 0x06
-
-#define CST816D_TOUCH_MAX_NUM 2
-
-typedef struct {
+struct touch_coord_t {
   uint16_t x;
   uint16_t y;
-} touch_coords_t;
+};
 
-typedef struct {
-  touch_coords_t coords[CST816D_TOUCH_MAX_NUM];
-  uint16_t touch_num;
-} touch_data_t;
+struct touch_data_t {
+  uint8_t touch_num;
+  touch_coord_t coords[2];
+};
 
-void cst816d_init(int tp_rst, int tp_int);
+// Returns true if CST816 hardware responded on I2C.
+bool cst816d_init(int tp_rst, int tp_int, int sda = -1, int scl = -1);
+bool cst816d_present();
 bool get_touch_data(touch_data_t *touch_data);
-void cst816d_touch_int_cb(void);

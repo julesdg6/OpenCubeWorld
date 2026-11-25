@@ -29,7 +29,7 @@ static CubeProtocol proto(OCW_CUBE_DATA_PIN);
 static const uint8_t OUR_ID = 0x01;  // same id as the original Arduino cube
 
 enum LinkState { LINK_SEARCH, LINK_HELLO, LINK_ACTIVE, LINK_END };
-static LinkState link = LINK_SEARCH;
+static LinkState linkState = LINK_SEARCH;
 static uint8_t peerId = 0;
 static bool peerSeen = false;
 static uint32_t nextKeepAt = 0;
@@ -56,13 +56,13 @@ static void handlePacket(const uint8_t p[7]) {
   switch (t) {
     case CW_TYPE_HELLO:
       world.onHello(id);
-      if (link == LINK_HELLO || link == LINK_ACTIVE) {
+      if (linkState == LINK_HELLO || linkState == LINK_ACTIVE) {
         // answer with our HELLO (the toys do this on meeting)
         uint8_t mine[7];
         CubeProtocol::mkHello(OUR_ID, mine);
         proto.sendPacket(mine);
         monitor(mine);
-        link = LINK_ACTIVE;
+        linkState = LINK_ACTIVE;
       }
       break;
     case CW_TYPE_KEEPALIVE:
@@ -74,12 +74,12 @@ static void handlePacket(const uint8_t p[7]) {
       break;
     case CW_TYPE_BYE:
       world.onBye(id);
-      link = LINK_END;
+      linkState = LINK_END;
       endAt = millis();
       break;
     case CW_TYPE_END:
       world.onEnd(id);
-      link = LINK_END;
+      linkState = LINK_END;
       endAt = millis();
       break;
     default:
@@ -100,12 +100,17 @@ void setup() {
   gfx = ocwCreateDisplay();
   gfx->begin();
   ocwBacklightOn();
-  cst816d_init(OCW_TP_RST_PIN, -1);
+  cst816d_init(OCW_TP_RST_PIN, OCW_TP_INT_PIN, OCW_I2C_SDA_PIN, OCW_I2C_SCL_PIN);
   world = ocw::World(gfx);
   world.begin();
   world.setup(2);
+  world.setViewMode(ocw::VIEW_LINKED_WORLD);
   world.session = ocw::SESS_ACTIVE;
+#if defined(ESP32)
+  randomSeed(esp_random());
+#else
   randomSeed(analogRead(A0));
+#endif
   Serial.println("OpenCubeWorld CubeLink: searching for a cube...");
 }
 
@@ -120,7 +125,7 @@ static bool touchEvent() {
 
 static void drawStatus() {
   const char *s;
-  switch (link) {
+  switch (linkState) {
     case LINK_SEARCH: s = "SEARCH"; break;
     case LINK_HELLO: s = "HELLO"; break;
     case LINK_ACTIVE: s = "LINKED"; break;
@@ -134,11 +139,11 @@ static void drawStatus() {
 void loop() {
   uint32_t now = millis();
 
-  switch (link) {
+  switch (linkState) {
     case LINK_SEARCH:
       if (now >= nextPollAt) {
         if (proto.pollForPeer(1500)) {
-          link = LINK_HELLO;
+          linkState = LINK_HELLO;
           Serial.println("peer found, waiting for HELLO");
         }
         nextPollAt = now + 400;  // cadence of the original .ino (delay 350)
@@ -149,12 +154,12 @@ void loop() {
   }
 
   // continuous listener in HELLO/ACTIVE
-  if (link == LINK_HELLO || link == LINK_ACTIVE) {
+  if (linkState == LINK_HELLO || linkState == LINK_ACTIVE) {
     uint8_t p[7];
     if (proto.readPacket(p, 40000)) {
       handlePacket(p);
     }
-    if (link == LINK_ACTIVE && now >= nextKeepAt) {
+    if (linkState == LINK_ACTIVE && now >= nextKeepAt) {
       uint8_t mine[7];
       CubeProtocol::mkKeepalive(0, OUR_ID, mine);
       proto.sendPacket(mine);
@@ -163,7 +168,7 @@ void loop() {
     }
   }
 
-  if (link == LINK_END) {
+  if (linkState == LINK_END) {
     // answer the end of the session, then start searching again
     static uint8_t answered = 0;
     if (!answered) {
@@ -178,7 +183,7 @@ void loop() {
       answered = 1;
     }
     if (now > endAt + 3000) {
-      link = LINK_SEARCH;
+      linkState = LINK_SEARCH;
       peerSeen = false;
       answered = 0;
       world.session = ocw::SESS_ACTIVE;
@@ -186,7 +191,7 @@ void loop() {
     }
   }
 
-  if (touchEvent() && link == LINK_ACTIVE) doWhip();
+  if (touchEvent() && linkState == LINK_ACTIVE) doWhip();
 
   world.update(now);
   world.draw();
